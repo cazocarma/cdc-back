@@ -13,6 +13,13 @@
 - `GET|POST /api/v1/{resource}`
 - `GET|PUT|DELETE /api/v1/{resource}/{id}`
 
+## Notas de seguridad
+
+- `POST /api/v1/auth/login` tiene rate limit por IP y por usuario+IP.
+- `usuarios` no expone `password_hash` en respuestas.
+- `POST/PUT` de `usuarios` aceptan campo `password` (el backend genera hash `scrypt`).
+- `POST/PUT/DELETE` generan registros de auditoria en `cdc.CDC_auditoria`.
+
 ## Resources
 
 - `usuarios`

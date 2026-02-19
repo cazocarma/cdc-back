@@ -56,8 +56,13 @@ Recursos habilitados:
 - `DB_PASSWORD`
 - `JWT_SECRET`
 - `JWT_EXPIRES_IN` (default `8h`)
+- `LOGIN_RATE_LIMIT_PER_IP` (default `40` por 15 min)
+- `LOGIN_RATE_LIMIT_PER_USER_IP` (default `10` por 15 min)
+- `LOGIN_RATE_LIMIT_WINDOW_MS` (default `900000`)
 
 ## Notas
 
 - Login valida contra `cdc.CDC_usuario`.
-- `password_hash` acepta `sha256:<hex>` o texto plano.
+- Si el hash existente es legacy (`sha256:` o texto plano), se migra automaticamente a `scrypt` al hacer login correcto.
+- En CRUD de `usuarios`, el backend recibe `password` y genera `password_hash` en servidor.
+- Las operaciones `POST/PUT/DELETE` registran auditoria en `cdc.CDC_auditoria` (origen `API`).

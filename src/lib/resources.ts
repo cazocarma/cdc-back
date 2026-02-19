@@ -1,3 +1,7 @@
+import { hashPassword } from "@/lib/password";
+
+export type ValueTransformer = (value: unknown) => unknown;
+
 export type ResourceConfig = {
   table: string;
   idColumn: string;
@@ -6,14 +10,42 @@ export type ResourceConfig = {
   updatableColumns: string[];
   searchColumns?: string[];
   readOnly?: boolean;
+  requiredOnInsert?: string[];
+  columnMap?: Record<string, string>;
+  valueTransformers?: Record<string, ValueTransformer>;
+  sensitiveColumns?: string[];
 };
+
+function passwordToHashTransformer(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("El campo password debe ser texto.");
+  }
+  return hashPassword(value);
+}
 
 export const RESOURCE_CONFIG: Record<string, ResourceConfig> = {
   usuarios: {
     table: "cdc.CDC_usuario",
     idColumn: "id_usuario",
-    insertableColumns: ["usuario", "nombre", "email", "password_hash", "activo"],
-    updatableColumns: ["nombre", "email", "password_hash", "activo"],
+    selectableColumns: [
+      "id_usuario",
+      "usuario",
+      "nombre",
+      "email",
+      "activo",
+      "created_at",
+      "updated_at",
+    ],
+    insertableColumns: ["usuario", "nombre", "email", "password", "activo"],
+    updatableColumns: ["usuario", "nombre", "email", "password", "activo"],
+    requiredOnInsert: ["usuario", "nombre", "password"],
+    columnMap: {
+      password: "password_hash",
+    },
+    valueTransformers: {
+      password: passwordToHashTransformer,
+    },
+    sensitiveColumns: ["password", "password_hash"],
     searchColumns: ["usuario", "nombre", "email"],
   },
   auditoria: {
@@ -284,4 +316,46 @@ export const RESOURCE_CONFIG: Record<string, ResourceConfig> = {
 
 export function getResourceConfig(resource: string): ResourceConfig | null {
   return RESOURCE_CONFIG[resource] ?? null;
+}
+
+export function getSelectableColumns(config: ResourceConfig): string[] {
+  if (config.selectableColumns && config.selectableColumns.length > 0) {
+    return config.selectableColumns;
+  }
+  return ["*"];
+}
+
+export function mapColumnName(config: ResourceConfig, column: string): string {
+  return config.columnMap?.[column] ?? column;
+}
+
+export function transformColumnValue(
+  config: ResourceConfig,
+  column: string,
+  value: unknown
+): unknown {
+  const transformer = config.valueTransformers?.[column];
+  if (!transformer) {
+    return value;
+  }
+  return transformer(value);
+}
+
+export function sanitizeRecord(
+  config: ResourceConfig,
+  row: Record<string, unknown>
+): Record<string, unknown> {
+  const sensitiveSet = new Set((config.sensitiveColumns ?? []).map((item) => item.toLowerCase()));
+  if (sensitiveSet.size === 0) {
+    return row;
+  }
+
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (sensitiveSet.has(key.toLowerCase())) {
+      continue;
+    }
+    next[key] = value;
+  }
+  return next;
 }

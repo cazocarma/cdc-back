@@ -1,7 +1,16 @@
 import { NextRequest } from "next/server";
-import { getPool, getSqlClient } from "@/lib/db";
+import type { Transaction } from "mssql";
+import { getAuthUser } from "@/lib/auth";
+import { writeAuditEntry } from "@/lib/audit";
+import { getPool } from "@/lib/db";
 import { error, ok } from "@/lib/http";
-import { getResourceConfig } from "@/lib/resources";
+import { buildMutationEntries } from "@/lib/resource-mutations";
+import {
+  getResourceConfig,
+  getSelectableColumns,
+  sanitizeRecord,
+} from "@/lib/resources";
+import { mapSqlError } from "@/lib/sql-errors";
 
 function parseId(raw: string): number | null {
   const parsed = Number(raw);
@@ -27,17 +36,18 @@ export async function GET(
       return error("Id invalido.", 422);
     }
 
+    const selectClause = getSelectableColumns(config).join(", ");
     const pool = await getPool();
     const result = await pool
       .request()
       .input("id", parsedId)
-      .query(`SELECT * FROM ${config.table} WHERE ${config.idColumn} = @id`);
+      .query(`SELECT ${selectClause} FROM ${config.table} WHERE ${config.idColumn} = @id`);
 
     if (result.recordset.length === 0) {
       return error("Registro no encontrado.", 404);
     }
 
-    return ok(result.recordset[0]);
+    return ok(sanitizeRecord(config, result.recordset[0]));
   } catch (e) {
     return error("Error consultando registro.", 500, e instanceof Error ? e.message : e);
   }
@@ -47,98 +57,195 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ resource: string; id: string }> }
 ) {
+  const { resource, id } = await params;
+  const config = getResourceConfig(resource);
+  if (!config) {
+    return error("Recurso no soportado.", 404);
+  }
+  if (config.readOnly) {
+    return error("Recurso de solo lectura.", 405);
+  }
+
+  const parsedId = parseId(id);
+  if (!parsedId) {
+    return error("Id invalido.", 422);
+  }
+
+  const authUser = await getAuthUser(request);
+  if (!authUser) {
+    return error("Unauthorized.", 401);
+  }
+
+  let tx: Transaction | null = null;
+
   try {
-    const { resource, id } = await params;
-    const config = getResourceConfig(resource);
-    if (!config) {
-      return error("Recurso no soportado.", 404);
-    }
-    if (config.readOnly) {
-      return error("Recurso de solo lectura.", 405);
-    }
-
-    const parsedId = parseId(id);
-    if (!parsedId) {
-      return error("Id invalido.", 422);
-    }
-
     const body = await request.json();
-    const entries = config.updatableColumns
-      .filter((column) => Object.prototype.hasOwnProperty.call(body, column))
-      .map((column) => ({ column, value: body[column] }));
+    const builtEntries = buildMutationEntries(body, resource, "update");
 
-    if (entries.length === 0) {
+    if (builtEntries.message) {
+      return error(builtEntries.message, 422, builtEntries.details);
+    }
+
+    if (builtEntries.entries.length === 0) {
       return error("No hay columnas actualizables en el payload.", 422);
     }
 
-    const sql = getSqlClient();
     const pool = await getPool();
-    const req = pool.request();
-    req.input("id", parsedId);
+    tx = pool.transaction();
+    await tx.begin();
 
-    const setClause = entries
+    const beforeReq = tx.request();
+    beforeReq.input("id", parsedId);
+    const beforeResult = await beforeReq.query(
+      `SELECT * FROM ${config.table} WHERE ${config.idColumn} = @id`
+    );
+    const beforeRow = beforeResult.recordset[0] as Record<string, unknown> | undefined;
+
+    if (!beforeRow) {
+      await tx.rollback();
+      return error("Registro no encontrado.", 404);
+    }
+
+    const updateReq = tx.request();
+    updateReq.input("id", parsedId);
+
+    const setClause = builtEntries.entries
       .map((entry, index) => {
         const paramName = `p${index}`;
-        req.input(paramName, entry.value ?? null);
-        return `${entry.column} = @${paramName}`;
+        updateReq.input(paramName, entry.value);
+        return `${entry.dbColumn} = @${paramName}`;
       })
       .join(", ");
 
-    const query = `
+    const updateQuery = `
       UPDATE ${config.table}
       SET ${setClause}
+      OUTPUT INSERTED.*
       WHERE ${config.idColumn} = @id;
-
-      SELECT @@ROWCOUNT AS affected;
     `;
 
-    const result = await req.query(query);
-    const affected = result.recordset[0]?.affected ?? 0;
-    if (affected === 0) {
+    const updateResult = await updateReq.query(updateQuery);
+    const updatedRow = updateResult.recordset[0] as Record<string, unknown> | undefined;
+    if (!updatedRow) {
+      await tx.rollback();
       return error("Registro no encontrado.", 404);
     }
-    return ok({ affected });
+
+    await writeAuditEntry({
+      tx,
+      idUsuario: authUser.idUsuario,
+      operacion: "UPDATE",
+      tabla: config.table,
+      pk: String(parsedId),
+      detalle: `resource=${resource}`,
+      beforeJson: beforeRow,
+      afterJson: updatedRow,
+      sensitiveColumns: config.sensitiveColumns,
+      origen: "API",
+    });
+
+    await tx.commit();
+
+    return ok({
+      affected: 1,
+      data: sanitizeRecord(config, updatedRow),
+    });
   } catch (e) {
-    if (e instanceof sql.RequestError) {
-      return error("Error de validacion/constraint SQL.", 409, e.message);
+    if (tx) {
+      try {
+        await tx.rollback();
+      } catch {
+        // ignore rollback failures
+      }
     }
+
+    const sqlError = mapSqlError(e);
+    if (sqlError) {
+      return error(sqlError.message, sqlError.status);
+    }
+
     return error("Error actualizando registro.", 500, e instanceof Error ? e.message : e);
   }
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ resource: string; id: string }> }
 ) {
+  const { resource, id } = await params;
+  const config = getResourceConfig(resource);
+  if (!config) {
+    return error("Recurso no soportado.", 404);
+  }
+  if (config.readOnly) {
+    return error("Recurso de solo lectura.", 405);
+  }
+
+  const parsedId = parseId(id);
+  if (!parsedId) {
+    return error("Id invalido.", 422);
+  }
+
+  const authUser = await getAuthUser(request);
+  if (!authUser) {
+    return error("Unauthorized.", 401);
+  }
+
+  let tx: Transaction | null = null;
+
   try {
-    const { resource, id } = await params;
-    const config = getResourceConfig(resource);
-    if (!config) {
-      return error("Recurso no soportado.", 404);
-    }
-    if (config.readOnly) {
-      return error("Recurso de solo lectura.", 405);
-    }
-
-    const parsedId = parseId(id);
-    if (!parsedId) {
-      return error("Id invalido.", 422);
-    }
-
     const pool = await getPool();
-    const result = await pool.request().input("id", parsedId).query(`
+    tx = pool.transaction();
+    await tx.begin();
+
+    const deleteReq = tx.request();
+    deleteReq.input("id", parsedId);
+
+    const deleteResult = await deleteReq.query(`
       DELETE FROM ${config.table}
+      OUTPUT DELETED.*
       WHERE ${config.idColumn} = @id;
-      SELECT @@ROWCOUNT AS affected;
     `);
 
-    const affected = result.recordset[0]?.affected ?? 0;
-    if (affected === 0) {
+    const deletedRow = deleteResult.recordset[0] as Record<string, unknown> | undefined;
+    if (!deletedRow) {
+      await tx.rollback();
       return error("Registro no encontrado.", 404);
     }
 
-    return ok({ affected });
+    await writeAuditEntry({
+      tx,
+      idUsuario: authUser.idUsuario,
+      operacion: "DELETE",
+      tabla: config.table,
+      pk: String(parsedId),
+      detalle: `resource=${resource}`,
+      beforeJson: deletedRow,
+      afterJson: null,
+      sensitiveColumns: config.sensitiveColumns,
+      origen: "API",
+    });
+
+    await tx.commit();
+
+    return ok({
+      affected: 1,
+      data: sanitizeRecord(config, deletedRow),
+    });
   } catch (e) {
+    if (tx) {
+      try {
+        await tx.rollback();
+      } catch {
+        // ignore rollback failures
+      }
+    }
+
+    const sqlError = mapSqlError(e);
+    if (sqlError) {
+      return error(sqlError.message, sqlError.status);
+    }
+
     return error("Error eliminando registro.", 500, e instanceof Error ? e.message : e);
   }
 }
