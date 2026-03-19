@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import type { Transaction } from "mssql";
 import { z } from "zod";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getUnauthorizedHeaders } from "@/lib/auth";
 import { writeAuditEntry } from "@/lib/audit";
 import { getPool } from "@/lib/db";
 import { error, ok, parsePositiveInt } from "@/lib/http";
@@ -44,6 +44,15 @@ export async function GET(
     const config = getResourceConfig(resource);
     if (!config) {
       return error("Recurso no soportado.", 404);
+    }
+
+    if (!(await getAuthUser(request))) {
+      return error(
+        "Token invalido o expirado.",
+        401,
+        undefined,
+        getUnauthorizedHeaders()
+      );
     }
 
     const parsed = listSchema.parse({
@@ -113,7 +122,12 @@ export async function POST(
 
   const authUser = await getAuthUser(request);
   if (!authUser) {
-    return error("Unauthorized.", 401);
+    return error(
+      "Token invalido o expirado.",
+      401,
+      undefined,
+      getUnauthorizedHeaders()
+    );
   }
 
   let tx: Transaction | null = null;

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractBearerToken, verifyAccessToken } from "@/lib/jwt";
 
-const PUBLIC_PATHS = new Set(["/api/v1", "/api/v1/auth/login", "/api/v1/health", "/api/health"]);
+const PUBLIC_PATHS = new Set(["/api/v1/auth/login", "/api/v1/health", "/api/health"]);
+const UNAUTHORIZED_HEADERS = {
+  "WWW-Authenticate": 'Bearer realm="cdc-api", error="invalid_token"',
+};
 
 function applySecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set("X-Content-Type-Options", "nosniff");
@@ -24,14 +27,24 @@ export async function middleware(request: NextRequest) {
 
   const token = extractBearerToken(request.headers.get("authorization"));
   if (!token) {
-    return applySecurityHeaders(NextResponse.json({ message: "Unauthorized" }, { status: 401 }));
+    return applySecurityHeaders(
+      NextResponse.json(
+        { message: "Token invalido o expirado." },
+        { status: 401, headers: UNAUTHORIZED_HEADERS }
+      )
+    );
   }
 
   try {
     await verifyAccessToken(token);
     return applySecurityHeaders(NextResponse.next());
   } catch {
-    return applySecurityHeaders(NextResponse.json({ message: "Invalid token" }, { status: 401 }));
+    return applySecurityHeaders(
+      NextResponse.json(
+        { message: "Token invalido o expirado." },
+        { status: 401, headers: UNAUTHORIZED_HEADERS }
+      )
+    );
   }
 }
 

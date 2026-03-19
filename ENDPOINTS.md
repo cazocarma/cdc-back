@@ -3,12 +3,12 @@
 ## Publicos
 
 - `GET /api/health`
-- `GET /api/v1`
 - `GET /api/v1/health`
 - `POST /api/v1/auth/login`
 
 ## JWT requerido
 
+- `GET /api/v1`
 - `GET /api/v1/auth/me`
 - `GET|POST /api/v1/{resource}`
 - `GET|PUT|DELETE /api/v1/{resource}/{id}`

@@ -6,6 +6,7 @@ Backend API (Next.js Route Handlers) para Cuaderno de Campo.
 
 - `POST /api/v1/auth/login` (publico)
 - `GET /api/v1/auth/me` (JWT requerido)
+- `GET /api/v1` (JWT requerido)
 - `GET /api/v1/health` (publico)
 
 Header para endpoints protegidos:

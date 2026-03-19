@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
+import { ok } from "@/lib/http";
 
 export async function GET() {
-  return NextResponse.json({ status: "ok", service: "cdc-back" });
+  return ok({ status: "ok", service: "cdc-back" });
 }

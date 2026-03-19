@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import type { Transaction } from "mssql";
-import { getAuthUser } from "@/lib/auth";
+import { getAuthUser, getUnauthorizedHeaders } from "@/lib/auth";
 import { writeAuditEntry } from "@/lib/audit";
 import { getPool } from "@/lib/db";
 import { error, ok } from "@/lib/http";
@@ -21,7 +21,7 @@ function parseId(raw: string): number | null {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ resource: string; id: string }> }
 ) {
   try {
@@ -29,6 +29,15 @@ export async function GET(
     const config = getResourceConfig(resource);
     if (!config) {
       return error("Recurso no soportado.", 404);
+    }
+
+    if (!(await getAuthUser(request))) {
+      return error(
+        "Token invalido o expirado.",
+        401,
+        undefined,
+        getUnauthorizedHeaders()
+      );
     }
 
     const parsedId = parseId(id);
@@ -73,7 +82,12 @@ export async function PUT(
 
   const authUser = await getAuthUser(request);
   if (!authUser) {
-    return error("Unauthorized.", 401);
+    return error(
+      "Token invalido o expirado.",
+      401,
+      undefined,
+      getUnauthorizedHeaders()
+    );
   }
 
   let tx: Transaction | null = null;
@@ -188,7 +202,12 @@ export async function DELETE(
 
   const authUser = await getAuthUser(request);
   if (!authUser) {
-    return error("Unauthorized.", 401);
+    return error(
+      "Token invalido o expirado.",
+      401,
+      undefined,
+      getUnauthorizedHeaders()
+    );
   }
 
   let tx: Transaction | null = null;
