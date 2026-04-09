@@ -1,30 +1,62 @@
-const jwt = require("jsonwebtoken");
+// ── Authentication middleware ──────────────────────────────────────
+// 1. Verifica que exista una sesion server-side autenticada (req.session.userId).
+// 2. Refresca proactivamente el access_token si esta por expirar (< 30s).
+// 3. Pone req.user con la info del usuario.
+// 4. Aplica el guard de rol minimo (config.oidc.requiredRole).
+
 const { config } = require("../config");
+const { getClient } = require("../lib/oidc-client");
+const { audit } = require("../lib/audit");
+const { logger } = require("../logger");
 
-function extractBearerToken(headerValue) {
-  if (!headerValue) return null;
-  const [scheme, token] = headerValue.split(" ");
-  if (!scheme || !token || scheme.toLowerCase() !== "bearer") return null;
-  return token.trim();
-}
+const REFRESH_LEEWAY_MS = 30_000;
 
-function requireJwtAuthn(req, res, next) {
-  const token = extractBearerToken(req.headers.authorization);
-  if (!token) {
-    return res.status(401).json({ message: "Token no enviado." });
+async function authnMiddleware(req, res, next) {
+  const session = req.session;
+
+  if (!session?.userId) {
+    return res.status(401).json({ message: "No autenticado" });
   }
 
-  try {
-    const payload = jwt.verify(token, config.authn.jwtSecret, {
-      algorithms: ["HS256"],
-      issuer: "greenvic-cdc",
-      audience: "greenvic-cdc-api",
-    });
-    req.authnClaims = payload;
-    next();
-  } catch {
-    return res.status(401).json({ message: "Token invalido o expirado." });
+  if (session.role !== config.oidc.requiredRole) {
+    audit({ usuarioId: session.userId, operacion: "FORBIDDEN_ROLE", detalle: `role=${session.role}` });
+    return res.status(403).json({ message: "Sin acceso a CDC" });
   }
+
+  const remaining = (session.accessTokenExpiresAt ?? 0) - Date.now();
+  if (remaining < REFRESH_LEEWAY_MS) {
+    try {
+      const client = await getClient();
+      const tokens = await client.refresh(session.refreshToken);
+
+      session.accessToken = tokens.access_token;
+      session.refreshToken = tokens.refresh_token || session.refreshToken;
+      session.idToken = tokens.id_token || session.idToken;
+      session.accessTokenExpiresAt = Date.now() + (tokens.expires_in ?? 300) * 1000;
+
+      await new Promise((resolve, reject) =>
+        session.save((err) => (err ? reject(err) : resolve()))
+      );
+      logger.debug({ userId: session.userId }, "oidc.refresh ok");
+    } catch (err) {
+      logger.warn({ err: err.message, userId: session.userId }, "oidc.refresh failed");
+      audit({ usuarioId: session.userId, operacion: "REFRESH_FAIL", detalle: err.message });
+      session.destroy(() => {
+        res.clearCookie(config.session.cookieName, { path: "/" });
+      });
+      return res.status(401).json({ message: "Sesion expirada" });
+    }
+  }
+
+  req.user = {
+    id: session.userId,
+    sub: session.sub,
+    usuario: session.usuario,
+    nombre: session.nombre,
+    email: session.email,
+    role: session.role,
+  };
+  next();
 }
 
-module.exports = { requireJwtAuthn, extractBearerToken };
+module.exports = { authnMiddleware };
