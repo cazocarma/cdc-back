@@ -1,23 +1,40 @@
 {
   "name": "cdc-back",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "description": "CDC — Backend BFF (Node.js + Express + SQL Server + Keycloak OIDC)",
   "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node dist/server.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "connect-redis": "^7.1.1",
+    "cookie-parser": "^1.4.7",
     "dotenv": "^16.5.0",
-    "express": "^5.1.0",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "express-session": "^1.18.1",
+    "helmet": "^7.2.0",
+    "ioredis": "^5.4.2",
     "mssql": "^11.0.1",
+    "openid-client": "^5.7.1",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@types/express": "^5.0.0",
+    "@types/cookie-parser": "^1.4.8",
+    "@types/express": "^4.17.21",
+    "@types/express-session": "^1.18.1",
     "@types/mssql": "^9.1.11",
-    "@types/node": "^20",
+    "@types/node": "^22",
+    "pino-pretty": "^11.3.0",
     "tsx": "^4.19.0",
     "typescript": "^5"
   }

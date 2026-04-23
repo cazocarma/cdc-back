@@ -1,46 +1,41 @@
 # Endpoints CDC API v1
 
+Backend BFF OIDC contra Keycloak (ver `platform/docs/AUTH_STANDARD.md`).
+La identidad se lleva en la cookie **`cdc.sid`** (HttpOnly, SameSite=Strict),
+respaldada por Redis (`cdc:sess:<sid>`). Los tokens OIDC nunca viajan al browser.
+
 ## Publicos
 
-- `GET /api/health`
-- `GET /api/v1/health`
-- `POST /api/v1/auth/login`
+- `GET /api/health` → `{ status:"ok", db:"ok"|"degraded" }`
+- `GET /api/v1/auth/login?returnTo=<ruta>` → `302` al `authorization_endpoint` de Keycloak.
+- `GET /api/v1/auth/callback?code&state` → `302` a `returnTo` o `/` (regenera sid + Set-Cookie). En error `302 /login?error=forbidden_role|callback_failed`.
 
-## JWT requerido
+## Con sesion
 
-- `GET /api/v1`
-- `GET /api/v1/auth/me`
-- `GET|POST /api/v1/{resource}`
-- `GET|PUT|DELETE /api/v1/{resource}/{id}`
+- `GET /api/v1/auth/me` → `{ user: { id, sub, usuario, nombre, email, role }, csrfToken }` o `401`.
+- `POST /api/v1/auth/logout` (requiere `X-CSRF-Token`) → end_session en Keycloak + destroy + `204`.
 
-## Notas de seguridad
+## Contrato de errores
 
-- `POST /api/v1/auth/login` tiene rate limit por IP y por usuario+IP.
-- `usuarios` no expone `password_hash` en respuestas.
-- `POST/PUT` de `usuarios` aceptan campo `password` (el backend genera hash `scrypt`).
-- `POST/PUT/DELETE` generan registros de auditoria en `cdc.CDC_auditoria`.
+Shape comun: `{ "error": { "code": string, "message": string, "details"?: unknown } }`.
+Codigos: `unauthorized`, `session_expired`, `forbidden`, `csrf_invalid`, `validation_failed`, `not_found`, `internal_error`.
 
-## Resources
+## CSRF
 
-- `usuarios`
-- `auditoria` (solo lectura)
-- `temporadas`
-- `exportadores`
-- `productores`
-- `agronomos`
-- `especies`
-- `variedades`
-- `condiciones-fruta`
-- `fundos`
-- `predios`
-- `familias-quimicos`
-- `ingredientes-activos`
-- `tipos-agua`
-- `patogenos`
-- `productos`
-- `productos-especie`
-- `ingredientes-producto`
-- `mercados`
-- `reglas`
-- `cuadros`
-- `aplicaciones`
+- Header `X-CSRF-Token` obligatorio en `POST/PUT/PATCH/DELETE`.
+- Token lo entrega `GET /api/v1/auth/me` (`csrfToken`). Comparacion con `timingSafeEqual`.
+- Metodos seguros (`GET/HEAD/OPTIONS`) no requieren CSRF.
+
+## Auditoria
+
+`cdc.Auditoria` con `Origen='OIDC'`. Eventos: `LOGIN`, `LOGOUT`, `REFRESH_FAIL`, `CSRF_FAIL`, `UNAUTHORIZED`, `FORBIDDEN_ROLE`.
+
+## Roles
+
+- Minimo requerido: `cdc-user` (env `OIDC_REQUIRED_ROLE`). Sin el rol en `realm_access.roles` el callback responde `forbidden_role` y no crea fila en `cdc.Usuario`.
+
+## Rutas de negocio
+
+Las features de negocio (temporadas, cuadros, aplicaciones, etc.) se montaran como
+controllers dedicados bajo `src/features/*/` siguiendo el mismo patron que auth,
+cada uno con `authnMiddleware` + `csrfMiddleware` delante. Aun no implementadas.
