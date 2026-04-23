@@ -32,15 +32,21 @@ export function buildApp(): express.Express {
         if (res.statusCode >= 400) return 'warn';
         return 'info';
       },
+      autoLogging: { ignore: (req) => req.url === '/api/health' },
     })
   );
+
+  // Health se monta ANTES de session/cookieParser/json: el healthcheck de docker
+  // debe poder responder aunque Redis o la DB tengan un hipo. Si session estuviese
+  // delante, un fallo de Redis haria 500 en /api/health y el container se marcaria
+  // unhealthy en loop, impidiendo incluso que recuperemos el servicio.
+  app.use(buildHealthRouter());
 
   app.use(express.json({ limit: '256kb' }));
   app.use(cookieParser());
   app.use(buildSessionMiddleware());
 
-  // Publico: health + auth (auth gestiona su propio rate-limit y CSRF interno)
-  app.use(buildHealthRouter());
+  // Auth: gestiona su propio rate-limit y CSRF interno (csrfMiddleware en /logout)
   app.use('/api/v1/auth', buildAuthRouter());
 
   // Las features de negocio (temporadas, cuadros, aplicaciones, ...) se montan aqui
