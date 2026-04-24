@@ -11,7 +11,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.ts\""
   },
   "dependencies": {
     "connect-redis": "^7.1.1",
@@ -21,21 +22,27 @@
     "express-rate-limit": "^7.4.1",
     "express-session": "^1.18.1",
     "helmet": "^7.2.0",
-    "ioredis": "^5.4.2",
+    "ioredis": "^5.10.1",
     "mssql": "^11.0.1",
     "openid-client": "^5.7.1",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
-    "zod": "^3.24.2"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/cookie-parser": "^1.4.8",
+    "@eslint/js": "^9.39.4",
+    "@types/cookie-parser": "^1.4.10",
     "@types/express": "^4.17.21",
-    "@types/express-session": "^1.18.1",
+    "@types/express-session": "^1.19.0",
     "@types/mssql": "^9.1.11",
-    "@types/node": "^22",
+    "@types/node": "^22.19.17",
+    "@typescript-eslint/eslint-plugin": "^8.59.0",
+    "@typescript-eslint/parser": "^8.59.0",
+    "eslint": "^9.39.4",
+    "globals": "^15.15.0",
     "pino-pretty": "^11.3.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5"
+    "prettier": "^3.8.3",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.2"
   }
 }
