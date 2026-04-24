@@ -3,6 +3,7 @@ import { logger } from './config/logger.js';
 import { buildApp } from './app.js';
 import { getPool, closePool } from './infra/db.js';
 import { getRedis, closeRedis } from './infra/redis.js';
+import { warmUpOidc } from './features/auth/auth.service.js';
 
 async function main(): Promise<void> {
   // Warm-up DB: no fatal si falla (el pool reintenta en cada request)
@@ -27,6 +28,11 @@ async function main(): Promise<void> {
   const server = app.listen(env.PORT, env.HOSTNAME, () => {
     logger.info({ port: env.PORT, host: env.HOSTNAME, env: env.NODE_ENV }, 'cdc-back escuchando');
   });
+
+  // Pre-warm del issuer OIDC: evita que el primer login pague el costo de
+  // discovery (que puede exceder 3.5s en cold-start de Keycloak). No bloqueante
+  // — si falla, el endpoint /auth/login reintentara al recibir el primer request.
+  void warmUpOidc();
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'apagando...');

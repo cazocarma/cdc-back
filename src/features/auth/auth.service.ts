@@ -1,25 +1,55 @@
 import type { Request } from 'express';
-import { Issuer, generators, type Client, type TokenSet } from 'openid-client';
+import { Issuer, custom, generators, type Client, type TokenSet } from 'openid-client';
 import { randomBytes } from 'node:crypto';
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { HttpError } from '../../middleware/error.js';
 import { upsertUsuario, type UsuarioRow } from './auth.repository.js';
 
-let cachedClient: Client | null = null;
+// El default de openid-client v5 es 3500ms — insuficiente cuando Keycloak
+// rehidrata cache Infinispan o arranca en frio. 10s absorbe esos picos sin
+// quedarse corto en operacion normal (discovery tipico <200ms).
+custom.setHttpOptionsDefaults({ timeout: 10_000 });
 
-async function getOidcClient(): Promise<Client> {
+let cachedClient: Client | null = null;
+let inFlightClient: Promise<Client> | null = null;
+
+export async function getOidcClient(): Promise<Client> {
   if (cachedClient) return cachedClient;
-  const issuer = await Issuer.discover(env.OIDC_DISCOVERY_URL);
-  cachedClient = new issuer.Client({
-    client_id: env.OIDC_CLIENT_ID,
-    client_secret: env.OIDC_CLIENT_SECRET,
-    redirect_uris: [env.OIDC_REDIRECT_URI],
-    response_types: ['code'],
-    token_endpoint_auth_method: 'client_secret_basic',
-  });
-  logger.info({ issuer: issuer.metadata.issuer }, 'OIDC issuer descubierto');
-  return cachedClient;
+  if (inFlightClient) return inFlightClient;
+
+  inFlightClient = (async () => {
+    const issuer = await Issuer.discover(env.OIDC_DISCOVERY_URL);
+    const client = new issuer.Client({
+      client_id: env.OIDC_CLIENT_ID,
+      client_secret: env.OIDC_CLIENT_SECRET,
+      redirect_uris: [env.OIDC_REDIRECT_URI],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'client_secret_basic',
+    });
+    cachedClient = client;
+    logger.info({ issuer: issuer.metadata.issuer }, 'OIDC issuer descubierto');
+    return client;
+  })();
+
+  try {
+    return await inFlightClient;
+  } catch (err) {
+    // Permitir reintento en el proximo call — no cachear el fallo.
+    inFlightClient = null;
+    throw err;
+  }
+}
+
+export async function warmUpOidc(): Promise<void> {
+  try {
+    await getOidcClient();
+  } catch (err) {
+    logger.warn(
+      { err: (err as Error).message },
+      'pre-warm OIDC fallo — el primer login reintentara'
+    );
+  }
 }
 
 export async function buildAuthorizationUrl(req: Request, returnTo: string): Promise<string> {
