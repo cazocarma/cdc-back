@@ -36,7 +36,10 @@ export interface CrudSpec<Dto extends { id: number | string }, Row> {
   allowDelete?: boolean;
 }
 
-function parseIdParam(raw: string): number {
+function parseIdParam(raw: string | undefined): number {
+  if (!raw) {
+    throw new HttpError(400, 'invalid_id', 'id invalido');
+  }
   const n = Number(raw);
   if (!Number.isInteger(n) || n <= 0) {
     throw new HttpError(400, 'invalid_id', 'id invalido');
@@ -86,7 +89,8 @@ async function list<Dto extends { id: number | string }, Row>(
   );
 
   const rows = result.recordset as Array<Record<string, unknown>>;
-  const total = rows.length > 0 ? Number(rows[0]['_total'] ?? 0) : 0;
+  const firstRow = rows[0];
+  const total = firstRow ? Number(firstRow['_total'] ?? 0) : 0;
   const data = rows.map((raw) => {
     const { _total: _ignored, ...rest } = raw;
     return spec.rowToDto(rest as Row);
